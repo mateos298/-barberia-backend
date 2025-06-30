@@ -38,9 +38,9 @@ const db = new sqlite3.Database('./barberia.db', sqlite3.OPEN_READWRITE | sqlite
 const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
-        user: 'mateosbarber359@gmail.com', // ¡TU CORREO DE GMAIL AQUÍ!
-        pass: 'uzvu tgug snjg bgas' // ¡TU CONTRASEÑA DE APLICACIÓN DE 16 CARACTERES AQUÍ!
-    }
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_PASS
+}
 });
 
 // ----------------------
