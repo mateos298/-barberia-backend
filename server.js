@@ -1,6 +1,6 @@
 const nodemailer = require('nodemailer');
 const express = require('express');
-const { Pool } = require('pg'); // CAMBIO CLAVE: Usamos 'pg' para PostgreSQL
+const { Pool } = require('pg'); // Usamos 'pg' para PostgreSQL
 const cors = require('cors');
 
 const app = express();
@@ -12,12 +12,10 @@ app.use(cors());
 // Middleware para parsear el cuerpo de las solicitudes JSON
 app.use(express.json());
 
-// ----------------------------------------------------
-// CAMBIO CLAVE: Conexión a la base de datos PostgreSQL
+// Conexión a la base de datos PostgreSQL
 // Usamos DATABASE_URL de las variables de entorno de Render
-// ----------------------------------------------------
 const pool = new Pool({
-    connectionString: process.env.DATABASE_URL, // Render inyecta esta URL
+    connectionString: process.env.DATABASE_URL,
     ssl: {
         rejectUnauthorized: false // NECESARIO para conexiones SSL en Render
     }
@@ -86,9 +84,49 @@ app.get('/api/turnos', async (req, res) => {
 app.post('/api/turnos', async (req, res) => {
     const { fecha, hora, servicio, nombre, telefono, email } = req.body;
 
+    // Validaciones básicas de los datos recibidos
     if (!fecha || !hora || !servicio || !nombre || !telefono) {
         return res.status(400).json({ error: 'Faltan campos obligatorios para la reserva.' });
     }
+
+    // ----------------------------------------------------
+    // LÓGICA DE VALIDACIÓN DE HORARIO EN EL BACKEND
+    // ----------------------------------------------------
+    const dateObj = new Date(fecha + 'T00:00:00'); // 'T00:00:00' para evitar problemas de zona horaria
+    const dayOfWeek = dateObj.getDay(); // 0 = Domingo, 1 = Lunes, ..., 6 = Sábado
+    const requestedHour = parseInt(hora.split(':')[0]); // Obtener solo la parte de la hora (ej. 13 de '13:00')
+
+    let isValidHour = false;
+
+    // Lunes a Viernes (1 a 5)
+    if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+        if (requestedHour >= 13 && requestedHour < 19) { // De 1 PM (13) a antes de 7 PM (19), la última hora válida es 18:00
+            isValidHour = true;
+        }
+    } 
+    // Sábado (6)
+    else if (dayOfWeek === 6) {
+        if (requestedHour >= 10 && requestedHour < 17) { // De 10 AM (10) a antes de 5 PM (17), la última hora válida es 16:00
+            isValidHour = true;
+        }
+    } 
+    // Domingo (0) u otro día no definido
+    else {
+        // No hay turnos disponibles
+        isValidHour = false;
+    }
+
+    // Asegurarse de que la hora sea en punto (ej. 14:00, no 14:30)
+    if (hora.split(':')[1] !== '00') {
+        isValidHour = false;
+    }
+
+    if (!isValidHour) {
+        return res.status(400).json({ error: 'La hora seleccionada no es válida para el día de la semana o no cumple con el formato por hora. L-V: 1PM-7PM, Sáb: 10AM-5PM.' });
+    }
+    // ----------------------------------------------------
+    // FIN LÓGICA DE VALIDACIÓN DE HORARIO EN EL BACKEND
+    // ----------------------------------------------------
 
     try {
         const result = await pool.query(
@@ -127,7 +165,6 @@ app.post('/api/turnos', async (req, res) => {
                 console.log('Correo de notificación enviado:', info.response);
             }
         });
-        // FIN LÓGICA DE CORREO
 
         res.status(201).json({
             message: '¡Turno reservado con éxito!',
@@ -136,7 +173,7 @@ app.post('/api/turnos', async (req, res) => {
         });
 
     } catch (err) {
-        if (err.code === '23505' && err.constraint === 'turnos_fecha_hora_key') { // Código de error para UNIQUE constraint violation en PostgreSQL
+        if (err.code === '23505' && err.constraint === 'turnos_fecha_hora_key') {
             return res.status(409).json({ error: 'El turno seleccionado ya está reservado. Por favor, elige otro.' });
         }
         console.error('Error al insertar turno en la base de datos:', err.stack);
@@ -154,14 +191,14 @@ function authenticateAdmin(req, res, next) {
     if (adminKey !== process.env.ADMIN_SECRET_KEY) {
         return res.status(401).json({ error: 'Acceso no autorizado. Credenciales de administrador incorrectas.' });
     }
-    next(); // Si la clave es correcta, continúa con la siguiente función (la ruta)
+    next();
 }
 
 // GET: Obtener todos los turnos con todos los detalles (PROTEGIDA)
 app.get('/api/admin/turnos', authenticateAdmin, async (req, res) => {
     try {
         const result = await pool.query('SELECT id, fecha, hora, servicio, nombre, telefono, email FROM turnos ORDER BY fecha, hora');
-        res.status(200).json(result.rows); // Devuelve directamente el array de filas
+        res.status(200).json(result.rows);
     } catch (error) {
         console.error('Error al obtener todos los turnos para administración:', error.stack);
         res.status(500).json({ error: 'Error interno del servidor al obtener turnos para administración.' });
